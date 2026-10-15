@@ -61,6 +61,21 @@ Estas son las carpetas del repositorio:
 | etl | [etl] |
 | ingesta | [ingesta] |
 
+## Crear el entorno
+
+Usaremos un entorno aislado para no tener conflictos con los paquetes.
+`python -m venv .venv`
+
+Lo activamos con:
+`source .venv/bin/activate`
+
+Lo desactivamos escribiendo `deactivate` en la terminal.
+
+## Requisitos del proyecto
+
+Los requisitos están recogidos en **requirements.txt**. Se instala con:
+`pip install -r requirements.txt`
+
 ## Como desplegar el entorno
 
 Con el **.env.example** que nos descargaremos, lo copiamos al que utiliza el repositorio.
