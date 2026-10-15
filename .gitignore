@@ -1,5 +1,6 @@
 # Datos y credenciales
 .env
+data/raw/
 
-# Carpetas
-data/
+# Enternos Python
+.venv/
