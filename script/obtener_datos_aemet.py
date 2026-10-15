@@ -24,7 +24,7 @@ if __name__ == "__main__":
     registros = obtener_datos()
     fecha = date.today().isoformat()
     ruta_salida = f"{DESTINATION}/aemet_valencia_{fecha}.json"
-    os.makedirs("data/raw", exist_ok=True)
+    os.makedirs(DESTINATION, exist_ok=True)
     with open(ruta_salida, "w", encoding="utf-8") as f:
         json.dump(registros, f, ensure_ascii=False, indent=2)
     print(f"Ingesta completada: {len(registros)} registros guardados en {ruta_salida}")
