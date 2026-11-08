@@ -7,3 +7,6 @@ data/raw/
 
 # Cache
 __pycache__/
+
+# Logs
+logs/*.log

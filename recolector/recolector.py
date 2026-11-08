@@ -111,7 +111,7 @@ def registrar(captura: datetime, fuente: str, ok: bool, filas: int, error: str =
         w.writerow([captura.isoformat(), fuente, int(ok), filas, error[:300]])
 
 
-def recoger(nombre: str) -> None:
+def recoger(nombre: str) -> bool:
     captura = datetime.now(timezone.utc)
     try:
         if nombre == "aemet":
@@ -121,12 +121,14 @@ def recoger(nombre: str) -> None:
         destino = guardar_parquet(registros, ruta, nombre, captura)
         registrar(captura, nombre, True, len(registros))
         log.info("%s: %d filas -> %s", nombre, len(registros), destino)
+        return True
     except Exception as e:
         registrar(captura, nombre, False, 0, str(e))
         log.exception("Fallo en %s", nombre)
+        return False
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    for fuente in sys.argv[1:]:   # p. ej.: python recolector.py espiras tramos aire meteo
-        recoger(fuente)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    resultados = [recoger(fuente) for fuente in sys.argv[1:]]   # p. ej.: python recolector.py espiras tramos aire meteo
+    sys.exit(0 if all(resultados) else 1)

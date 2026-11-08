@@ -215,10 +215,69 @@ Perderemos los datos que no estén guardados en volumenes persistidos
 
 ### Bloque 1 - Ingesta batch
 
-- Objetivo: [ ]
-- Pasos realizados: [ ]
-- Problemas encontrados y solución: [ ]
-- Resultado: [ ]
+- **Objetivo:** construir la ingesta batch del proyecto: un recolector que guarda cada cierto tiempo una foto de cada fuente (Geoportal y AEMET) programado con cron, y la carga única del histórico de calidad del aire 2016–2022.
+- **Pasos realizados:**
+  1. Exploración y documentación de las fuentes (sección *Fuentes de datos*).
+  2. Estructura del proyecto: `recolector/`, `ingesta/`, `data/raw/`, `logs/` y entorno virtual con `requests`, `pyarrow` y `python-dotenv`.
+  3. Descarga de las capas del Geoportal con reintentos (errores de red, 429 y 5xx) y paginación.
+  4. Guardado de cada captura en Parquet particionado por fecha, con la columna `captura_utc`, y registro de cada ejecución en `data/raw/_registro/ejecuciones.csv`.
+  5. Descarga de AEMET en dos pasos con la API key en el `.env`.
+  6. Un único punto de entrada (`recolector.py <fuentes>`) en el que un fallo en una fuente no impide recoger las demás. Si alguna falla, el script termina con código 1.
+  7. Programación con cron con una frecuencia distinta por fuente.
+  8. Carga del histórico de aire: [pendiente]
+- **Problemas encontrados y solución:** ver *Incidencias con las fuentes*.
+- **Resultado:** el recolector se ejecuta con cron desde el 2026-11-08. Evidencia: captura de `crontab -l` y `data/raw/_registro/ejecuciones.csv`. ![Captura de crontab -l](<docs/img/crontab.png>) ![Captura ejecuciones.csv](<docs/img/ejecuciones.png>)
+
+#### Diagrama de la ingesta
+
+```mermaid
+graph LR
+    CRON[cron] --> R[recolector.py]
+    G[Geoportal<br/>208, 188, 192, 156, 157] --> R
+    A[AEMET 46250<br/>API key en .env] --> R
+    R --> P[(data/raw/fuente/fecha=AAAA-MM-DD/*.parquet)]
+    R --> E[(data/raw/_registro/ejecuciones.csv)]
+    R --> L[(logs/recolector.log)]
+    C[CKAN<br/>histórico aire 2016-2022] --> H[historico_aire.py<br/>carga única]
+    H --> PH[(data/raw/calidad_aire/historico/)]
+```
+
+#### Programación con cron
+
+Cada fuente tiene su propia frecuencia, según lo rápido que cambia en origen:
+
+| Fuente | Frecuencia | Por qué |
+| --- | --- | --- |
+| Estado del tráfico (192) | Cada 10 min | Se actualiza cada 3 min, es la que más cambia |
+| Tramos (188) | Cada 15 min | Se actualiza en tiempo real; con 4 fotos por hora podemos sacar la media horaria |
+| Espiras (208) | Cada hora (min 5) | Se actualiza cada hora y `ih` ya es intensidad horaria |
+| Aire (156) y meteo municipal (157) | Cada hora (min 20) | Medición horaria; el minuto 20 deja margen a que se publique |
+| AEMET | Diaria (07:30) | La predicción se actualiza una o pocas veces al día y cada llamada trae 7 días |
+
+Aunque la tabla de fuentes dice "ingesta diaria", con una foto al día tendríamos un solo dato de NO₂ por estación y día, y el modelo del Bloque 9 es horario. Por eso subimos la frecuencia de tráfico y aire.
+
+```cron
+*/10 * * * * cd /home/qweidev/IABD/BigData/bigdata-p4-urbano && .venv/bin/python recolector/recolector.py estado >> logs/recolector.log 2>&1
+*/15 * * * * cd /home/qweidev/IABD/BigData/bigdata-p4-urbano && .venv/bin/python recolector/recolector.py tramos >> logs/recolector.log 2>&1
+5 * * * *    cd /home/qweidev/IABD/BigData/bigdata-p4-urbano && .venv/bin/python recolector/recolector.py espiras >> logs/recolector.log 2>&1
+20 * * * *   cd /home/qweidev/IABD/BigData/bigdata-p4-urbano && .venv/bin/python recolector/recolector.py aire meteo >> logs/recolector.log 2>&1
+30 7 * * *   cd /home/qweidev/IABD/BigData/bigdata-p4-urbano && .venv/bin/python recolector/recolector.py aemet >> logs/recolector.log 2>&1
+```
+
+- `cd ...`: el recolector guarda en `data/raw` con ruta relativa, así que lo lanzamos desde la raíz del repo.
+- `.venv/bin/python`: cron no activa el entorno virtual, así que usamos su Python directamente.
+- `>> logs/recolector.log 2>&1`: guardamos la salida y los errores en el log, sin borrar lo anterior.
+
+#### Incidencias con las fuentes
+
+| Problema | Causa | Solución |
+| --- | --- | --- |
+| AEMET tardaba más de 30 s en responder | El servidor de AEMET es lento a veces | Timeout de 90 s y reintentos con espera |
+| Los últimos días de AEMET salían sin probabilidad de lluvia | Del 5º día en adelante `probPrecipitacion` trae una sola entrada sin `periodo` | Tratamos la entrada sin `periodo` como el día completo (`00-24`) |
+| El enunciado da dos orígenes distintos para AEMET | La tabla dice predicción del municipio 46250 y el paso 5 dice estación 8416 | Usamos la predicción 46250, que es la que tienen las tablas de campos |
+| `ih = -1` y `ih = null` en las espiras | El sensor no tiene dato o no hay lectura | Se guardan tal cual en raw; se filtrarán en el Bloque 4 |
+| El script siempre terminaba con código 0 | `recoger()` captura las excepciones | `recoger()` devuelve si ha ido bien y el script sale con `sys.exit(1)` si falla alguna fuente |
+| El cron solo funciona con el PC encendido | Cron corre dentro de WSL | Para producción habría que usar un servidor siempre encendido; los huecos quedan registrados en `ejecuciones.csv` |
 
 ### Bloque 2 - Bases de datos NoSQL
 
