@@ -2,6 +2,8 @@ import time
 import requests
 import csv
 import os
+import logging
+import sys
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +11,8 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+
+log = logging.getLogger("recolector")
 
 GEOPORTAL = "https://geoportal.valencia.es/server/rest/services/OPENDATA"
 
@@ -105,3 +109,24 @@ def registrar(captura: datetime, fuente: str, ok: bool, filas: int, error: str =
         if nuevo:
             w.writerow(["captura_utc", "fuente", "ok", "filas", "error"])
         w.writerow([captura.isoformat(), fuente, int(ok), filas, error[:300]])
+
+
+def recoger(nombre: str) -> None:
+    captura = datetime.now(timezone.utc)
+    try:
+        if nombre == "aemet":
+            registros, ruta = descargar_aemet(), "meteo/aemet"
+        else:
+            registros, ruta = descargar_capa(FUENTES[nombre]["capa"]), FUENTES[nombre]["ruta"]
+        destino = guardar_parquet(registros, ruta, nombre, captura)
+        registrar(captura, nombre, True, len(registros))
+        log.info("%s: %d filas -> %s", nombre, len(registros), destino)
+    except Exception as e:
+        registrar(captura, nombre, False, 0, str(e))
+        log.exception("Fallo en %s", nombre)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    for fuente in sys.argv[1:]:   # p. ej.: python recolector.py espiras tramos aire meteo
+        recoger(fuente)
