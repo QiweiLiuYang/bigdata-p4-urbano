@@ -1,11 +1,14 @@
 import time
 import requests
 import csv
+import os
+from dotenv import load_dotenv
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+
 
 GEOPORTAL = "https://geoportal.valencia.es/server/rest/services/OPENDATA"
 
@@ -19,11 +22,16 @@ FUENTES = {
 
 DATA_DIR = Path("data/raw")
 
-def get_con_reintentos(url, params, reintentos=3):
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+AEMET_API_KEY = os.getenv("AEMET_API_KEY")
+
+AEMET_URL = "https://opendata.aemet.es/opendata/api/prediccion/especifica/municipio/diaria/46250"
+
+def get_con_reintentos(url, params, reintentos=3, headers=None):
     """GET con reintentos ante errores de red, 429 y 5xx."""
     for intento in range(reintentos):
         try:
-            r = requests.get(url, params=params, timeout=60)
+            r = requests.get(url, params=params, timeout=90, headers=headers)
             if r.status_code == 429 or r.status_code >= 500:
                 raise requests.HTTPError(f"HTTP {r.status_code}")
             r.raise_for_status()
@@ -45,6 +53,35 @@ def descargar_capa(capa: str) -> list[dict]:
         if not datos.get("exceededTransferLimit"):
             return registros
         params["resultOffset"] = len(registros)
+
+
+def descargar_aemet() -> list[dict]:
+    """Predicción diaria de Valencia (AEMET, dos pasos). Una fila por día"""
+    if not AEMET_API_KEY:
+        raise RuntimeError("Falta AEMET_API_KEY en el .env")
+
+    paso1 = get_con_reintentos(AEMET_URL, None, headers={"api_key": AEMET_API_KEY}).json()
+    if paso1.get("estado") != 200:
+        raise RuntimeError(f"AEMET estado {paso1.get('estado')}: {paso1.get('descripcion')}")
+
+    prediccion = get_con_reintentos(paso1["datos"], None).json()
+
+    registros = []
+    for dia in prediccion[0]["prediccion"]["dia"]:
+        prob = next(
+            (p.get("value") for p in dia.get("probPrecipitacion", [])
+            if p.get("periodo", "00-24") == "00-24"),
+            None,
+        )
+
+        registros.append({
+            "fecha": dia["fecha"][:10],
+            "temperatura_maxima": dia["temperatura"]["maxima"],
+            "temperatura_minima": dia["temperatura"]["minima"],
+            "probabilidad_precipitacion": prob,
+        })
+    return registros
+
 
 
 def guardar_parquet(registros: list[dict], ruta: str, nombre: str, captura: datetime) -> Path:

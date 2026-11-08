@@ -4,3 +4,6 @@ data/raw/
 
 # Enternos Python
 .venv/
+
+# Cache
+__pycache__/

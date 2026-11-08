@@ -156,9 +156,12 @@ Estas son las carpetas del repositorio:
 | Carpeta | Contenido |
 | --- | --- |
 | dashboard/ | Vacío de momento |
-| etl | Vacío de momento |
-| ingesta | Scripts |
-| data/raw | Datos ingestados | 
+| etl/ | Vacío de momento |
+| ingesta/ | Script de carga única |
+| recolector/ | Scripts de ingesta de Geoportal y AEMET |
+| data/raw | Datos ingestados en .parquet |
+| logs/ | Carpeta donde estarán los logs de las ejecuciones |
+
 
 ## Entorno
 
