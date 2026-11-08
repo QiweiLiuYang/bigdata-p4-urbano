@@ -224,7 +224,7 @@ Perderemos los datos que no estén guardados en volumenes persistidos
   5. Descarga de AEMET en dos pasos con la API key en el `.env`.
   6. Un único punto de entrada (`recolector.py <fuentes>`) en el que un fallo en una fuente no impide recoger las demás. Si alguna falla, el script termina con código 1.
   7. Programación con cron con una frecuencia distinta por fuente.
-  8. Carga del histórico de aire: [pendiente]
+  8. Carga única del histórico de aire con `ingesta/historico_aire.py`: 449.026 filas (2016–2021) y 201.480 (2021–2022), guardadas como texto en `data/raw/calidad_aire/historico/origen=.../`. No repite la descarga salvo con `--forzar`.
 - **Problemas encontrados y solución:** ver *Incidencias con las fuentes*.
 - **Resultado:** el recolector se ejecuta con cron desde el 2026-11-08. Evidencia: captura de `crontab -l` y `data/raw/_registro/ejecuciones.csv`. ![Captura de crontab -l](<docs/img/crontab.png>) ![Captura ejecuciones.csv](<docs/img/ejecuciones.png>)
 
@@ -278,6 +278,7 @@ Aunque la tabla de fuentes dice "ingesta diaria", con una foto al día tendríam
 | `ih = -1` y `ih = null` en las espiras | El sensor no tiene dato o no hay lectura | Se guardan tal cual en raw; se filtrarán en el Bloque 4 |
 | El script siempre terminaba con código 0 | `recoger()` captura las excepciones | `recoger()` devuelve si ha ido bien y el script sale con `sys.exit(1)` si falla alguna fuente |
 | El cron solo funciona con el PC encendido | Cron corre dentro de WSL | Para producción habría que usar un servidor siempre encendido; los huecos quedan registrados en `ejecuciones.csv` |
+| Las fechas del histórico tienen formatos distintos y algunas con día y mes intercambiados | Los dos recursos de CKAN se publicaron con criterios distintos | Se guardan tal cual como texto; se arreglarán en el Bloque 4 |
 
 ### Bloque 2 - Bases de datos NoSQL
 
