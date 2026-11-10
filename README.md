@@ -36,8 +36,8 @@ Usamos tres orígenes de datos:
 
 | Fuente | Origen | Capa/endpoint | Clave | Frecuencia | Histórico |
 | --- | --- | --- | --- | --- | --- |
-| Tráfico | Geoportal Valencia (ArcGIS MapServer) | `Trafico/MapServer/208` | No | Se actualiza cada pocos minutos; lo ingestamos a diario | No, solo la foto actual |
-| Calidad del aire | Geoportal Valencia (ArcGIS MapServer) | `MedioAmbiente/MapServer/156` | No | Se actualiza cada hora; lo ingestamos a diario | No, solo la foto actual |
+| Tráfico | Geoportal Valencia (ArcGIS MapServer) | `Trafico/MapServer/208` | No | Se actualiza cada pocos minutos; lo recogemos con cron (ver Bloque 1) | No, solo la foto actual |
+| Calidad del aire | Geoportal Valencia (ArcGIS MapServer) | `MedioAmbiente/MapServer/156` | No | Se actualiza cada hora; lo recogemos cada hora con cron | No, solo la foto actual |
 | Meteorología | AEMET OpenData | `prediccion/especifica/municipio/diaria/46250` | Sí (`AEMET_API_KEY`) | Diaria | No. Las capturas se solapan y las deduplicaremos en el Bloque 4 |
 | Histórico de aire 2016–2022 | Portal CKAN | API `datastore_search` | — | Una sola carga | Sí |
 
@@ -157,10 +157,12 @@ Estas son las carpetas del repositorio:
 | --- | --- |
 | dashboard/ | Vacío de momento |
 | etl/ | Vacío de momento |
-| ingesta/ | Script de carga única |
-| recolector/ | Scripts de ingesta de Geoportal y AEMET |
-| data/raw | Datos ingestados en .parquet |
+| ingesta/ | Script de carga única del histórico de aire |
+| recolector/ | Scripts de captura periódica de Geoportal y AEMET |
+| data/raw | Datos ingestados. Parquet almacenado por fechas, histórico, salida de NiFi y ejecuciones.csv |
 | logs/ | Carpeta donde estarán los logs de las ejecuciones |
+| nifi/ | Exportación del flujo de NiFi |
+| docs/img | Captura de evidencias |
 
 
 ## Entorno
@@ -193,6 +195,8 @@ Con el **.env.example** que nos descargaremos, lo copiamos al que utiliza el rep
 Levantamos los contenedores en modo *detached* con:
 `docker compose up -d`
 
+Por ahora el único servicio es **Apache NiFi**. Se accede por **HTTPS** (por HTTP da error) en https://localhost:8443/nifi, con el usuario y la contraseña del `docker-compose.yml`.
+
 Para mirar que contenedores tenemos:
 `docker compose ps`
 
@@ -215,7 +219,7 @@ Perderemos los datos que no estén guardados en volumenes persistidos
 
 ### Bloque 1 - Ingesta batch
 
-- **Objetivo:** construir la ingesta batch del proyecto: un recolector que guarda cada cierto tiempo una foto de cada fuente (Geoportal y AEMET) programado con cron, y la carga única del histórico de calidad del aire 2016–2022.
+- **Objetivo:** construir la ingesta batch del proyecto: un recolector que guarda cada cierto tiempo una foto de cada fuente (Geoportal y AEMET) programado con cron, y la carga única del histórico de calidad del aire 2016–2022. Como ampliación, reproducir la captura de espiras con Apache NiFi y compararla con el script.
 - **Pasos realizados:**
   1. Exploración y documentación de las fuentes (sección *Fuentes de datos*).
   2. Estructura del proyecto: `recolector/`, `ingesta/`, `data/raw/`, `logs/` y entorno virtual con `requests`, `pyarrow` y `python-dotenv`.
@@ -225,8 +229,19 @@ Perderemos los datos que no estén guardados en volumenes persistidos
   6. Un único punto de entrada (`recolector.py <fuentes>`) en el que un fallo en una fuente no impide recoger las demás. Si alguna falla, el script termina con código 1.
   7. Programación con cron con una frecuencia distinta por fuente.
   8. Carga única del histórico de aire con `ingesta/historico_aire.py`: 449.026 filas (2016–2021) y 201.480 (2021–2022), guardadas como texto en `data/raw/calidad_aire/historico/origen=.../`. No repite la descarga salvo con `--forzar`.
-- **Problemas encontrados y solución:** ver *Incidencias con las fuentes*.
-- **Resultado:** el recolector se ejecuta con cron desde el 2026-11-08. Evidencia: captura de `crontab -l` y `data/raw/_registro/ejecuciones.csv`. ![Captura de crontab -l](<docs/img/crontab.png>) ![Captura ejecuciones.csv](<docs/img/ejecuciones.png>)
+  9. Ampliación: flujo de Apache NiFi que reproduce la captura de espiras, y comparativa con el script.
+- **Problemas encontrados y solución:** ver *Incidencias*.
+- **Resultado:** el recolector se ejecuta con cron desde el 2026-11-08. Evidencia: captura de `crontab -l` y `data/raw/_registro/ejecuciones.csv`.
+
+#### Evidencias
+| Criterio | Evidencia |
+| --- | --- |
+| Fuentes del Geoportal y AEMET en Parquet, particionadas por fecha | ![Parquet particionado](<docs/img/parquets.png>) |
+| Cada ejecución queda registrada | ![ejecuciones.csv](<docs/img/ejecuciones.png>) |
+| Un fallo en una fuente no bloquea las demás | ![Fallo independiente](<docs/img/fallo.png>) |
+| Cron programado | ![crontab -l](<docs/img/crontab.png>) |
+| Histórico guardado sin alterar los valores | ![Histórico](<docs/img/historico.png>) |
+| Flujo NiFi en ejecución | ![Flujo NiFi](<docs/img/nifi_flujo.png>) ![Provenance](<docs/img/nifi_data.png>) ![Ficheros NiFi](<docs/img/nifi_ficheros.png>) |
 
 #### Diagrama de la ingesta
 
@@ -268,17 +283,48 @@ Aunque la tabla de fuentes dice "ingesta diaria", con una foto al día tendríam
 - `.venv/bin/python`: cron no activa el entorno virtual, así que usamos su Python directamente.
 - `>> logs/recolector.log 2>&1`: guardamos la salida y los errores en el log, sin borrar lo anterior.
 
-#### Incidencias con las fuentes
+#### Ampliación: captura de espiras con Apache NiFi
+
+Hemos reproducido en NiFi 1.28.1 (servicio en `docker-compose.yml`) la captura de la capa 208. El flujo está exportado en `nifi/espiras_208.json`.
+
+```mermaid
+graph LR
+    A[InvokeHTTP<br/>capa 208, cada hora<br/>+ SSL Context Service] --> B[EvaluateJsonPath<br/>$.features]
+    B --> C[SplitJson<br/>un flowfile por punto]
+    C --> D[UpdateAttribute<br/>filename con marca de tiempo]
+    D --> E[PutFile<br/>data/raw/nifi/]
+```
+
+| Procesador | Configuración clave |
+| --- | --- |
+| InvokeHTTP | GET a la URL de consulta de la capa 208, cada hora. Usa un StandardSSLContextService con un truststore que incluye el certificado raíz de la ACCV |
+| EvaluateJsonPath | Destino `flowfile-content`, propiedad `features = $.features`: deja solo el array de puntos |
+| SplitJson | `$.*`: un flowfile por punto de medida (1211 en cada ejecución) |
+| UpdateAttribute | `filename = espiras_<AAAAMMDDTHHMMSSZ>_<índice>.json`. Hace falta porque PutFile nombra los ficheros con ese atributo |
+| PutFile | Directorio `/opt/nifi/datos`, montado en `data/raw/nifi/` |
+
+| Aspecto | Recolector Python | Flujo NiFi |
+| --- | --- | --- |
+| Tiempo de desarrollo | Más lento porque tengo que documentarme y asegurarme que le código funcione y no tenga bugs. | Algo más rápido, arrastrar nodos y configurarlos. Tuve contratiempos con los certificados de seguridad. |
+| Facilidad para depurar un fallo | Traza completa del error en el log y una línea con `ok=0` en `ejecuciones.csv` | El error aparece como aviso en el procesador, y con Data Provenance se puede ver el contenido de cada flowfile. Algunos errores (como el del certificado) son poco claros |
+| Visibilidad del estado en ejecución | Solo a través del log y del CSV | Muy buena: contadores, colas y estado de cada procesador en directo |
+| Facilidad de versionado en Git | Muy buena: es código, los cambios se leen bien en un diff | Peor: se versiona un JSON exportado, largo y difícil de revisar, y sin las propiedades sensibles (la contraseña del truststore) |
+| Recursos necesarios en el servidor | Mínimos: Python, `requests` y `pyarrow` | Altos: un contenedor con Java que ocupa más de 1 GB de memoria aunque no haga nada |
+
+**Conclusión:** NiFi da mucha visibilidad y es cómodo para flujos visuales, pero para este proyecto nos quedamos con el recolector Python como solución principal. Pagina las capas grandes, guarda en Parquet (NiFi guarda un JSON por punto) y necesita muchos menos recursos en el servidor, que tiene que estar siempre encendido.
+
+#### Incidencias
 
 | Problema | Causa | Solución |
 | --- | --- | --- |
 | AEMET tardaba más de 30 s en responder | El servidor de AEMET es lento a veces | Timeout de 90 s y reintentos con espera |
 | Los últimos días de AEMET salían sin probabilidad de lluvia | Del 5º día en adelante `probPrecipitacion` trae una sola entrada sin `periodo` | Tratamos la entrada sin `periodo` como el día completo (`00-24`) |
-| El enunciado da dos orígenes distintos para AEMET | La tabla dice predicción del municipio 46250 y el paso 5 dice estación 8416 | Usamos la predicción 46250, que es la que tienen las tablas de campos |
 | `ih = -1` y `ih = null` en las espiras | El sensor no tiene dato o no hay lectura | Se guardan tal cual en raw; se filtrarán en el Bloque 4 |
-| El script siempre terminaba con código 0 | `recoger()` captura las excepciones | `recoger()` devuelve si ha ido bien y el script sale con `sys.exit(1)` si falla alguna fuente |
-| El cron solo funciona con el PC encendido | Cron corre dentro de WSL | Para producción habría que usar un servidor siempre encendido; los huecos quedan registrados en `ejecuciones.csv` |
+| El cron solo funciona con el PC encendido | Cron corre dentro de WSL | Para producción habría que usar un servidor siempre encendido, los huecos quedan registrados en `ejecuciones.csv` |
 | Las fechas del histórico tienen formatos distintos y algunas con día y mes intercambiados | Los dos recursos de CKAN se publicaron con criterios distintos | Se guardan tal cual como texto; se arreglarán en el Bloque 4 |
+| No se podía entrar en NiFi con las credenciales del compose | NiFi exige contraseñas de al menos 12 caracteres; si no, la rechaza (`Password must be at least 12 characters`) | Contraseña de 12 caracteres y recrear el contenedor |
+| NiFi daba "invalid http response" | NiFi en el puerto 8443 solo acepta HTTPS | Entrar por `https://localhost:8443/nifi` |
+| NiFi no podía conectar con el Geoportal (`PKIX path building failed`) | El certificado del Geoportal es de la ACCV, cuya raíz (ACCVRAIZ1) no está en el almacén de confianza de la Java de NiFi, Python sí conecta porque `requests` usa `certifi` | Truststore con el certificado ACCVRAIZ1 y un StandardSSLContextService en InvokeHTTP |
 
 ### Bloque 2 - Bases de datos NoSQL
 
