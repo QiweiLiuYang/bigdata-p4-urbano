@@ -4,3 +4,9 @@ data/raw/
 
 # Enternos Python
 .venv/
+
+# Cache
+__pycache__/
+
+# Logs
+logs/*.log

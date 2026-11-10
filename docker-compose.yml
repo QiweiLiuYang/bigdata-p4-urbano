@@ -1,0 +1,15 @@
+services:
+  nifi:
+    image: apache/nifi:1.28.1
+    container_name: bigdata-nifi
+    ports:
+      - "8443:8443"
+    environment:
+      - SINGLE_USER_CREDENTIALS_USERNAME=admin
+      - SINGLE_USER_CREDENTIALS_PASSWORD=adminadmin123
+    volumes:
+      - nifi-data:/opt/nifi/nifi-current/conf
+      - ./data/raw/nifi:/opt/nifi/datos
+
+volumes:
+  nifi-data:
